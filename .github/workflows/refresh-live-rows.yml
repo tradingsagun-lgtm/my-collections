@@ -8,8 +8,9 @@ on:
     - cron: '17 */6 * * *'   # every 6 hours, at 17 minutes past
   workflow_dispatch:          # "Run workflow" button on the Actions tab
   push:
-    paths:                    # also when the PC changes which rows are live, or this job itself
+    paths:                    # also when the PC changes the rows, or this job itself
       - 'live-rows.json'
+      - 'catalog/**'
       - 'tools/**'
       - '.github/workflows/refresh-live-rows.yml'
 
@@ -23,7 +24,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       # Rows built on our own index need it, and the lists it reads from Wikidata
@@ -37,11 +38,14 @@ jobs:
           restore-keys: title-index-
       - name: Fetch the lists
         run: node tools/refresh-live-rows.js
+      - name: Rating posters
+        run: node tools/rate-posters.js
       - name: Commit what changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A catalog live-status.json
+          mkdir -p posters
+          git add -A catalog live-status.json posters
           if git diff --cached --quiet; then
             echo "Nothing changed."
           else

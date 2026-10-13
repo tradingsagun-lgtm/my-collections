@@ -347,4 +347,16 @@ async function genreOptions() {
   return Object.fromEntries(TYPES.map(t => [t, (genresFor(t) || {}).options || []]));
 }
 
-module.exports = { SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
+// ---- rating posters ----
+// The poster with a title's rating drawn on it is made by the job on GitHub
+// (tools/rate-posters.js) and stored under this name. The rating is part of the
+// name, so a changed rating is a new file and no device keeps showing the old one.
+function ratedPosterFile(meta) {
+  const rating = parseFloat(meta && meta.imdbRating);
+  if (!meta || !/^tt\d+$/.test(meta.id || '') || !(rating > 0)) return null;
+  return `posters/${meta.id}-${Math.round(rating * 10)}.jpg`;
+}
+// The ordinary poster for a title, by IMDb id.
+const plainPoster = id => `https://images.metahub.space/poster/medium/${id}/img`;
+
+module.exports = { ratedPosterFile, plainPoster, SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
