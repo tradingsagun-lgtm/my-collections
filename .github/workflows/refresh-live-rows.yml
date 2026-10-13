@@ -23,9 +23,18 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # Rows built on our own index need it; it is rebuilt at most once a day
+      # (IMDb's files change daily) and kept between runs in the job's cache.
+      - id: day
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .index-cache
+          key: title-index-${{ steps.day.outputs.day }}
+          restore-keys: title-index-
       - name: Fetch the lists
         run: node tools/refresh-live-rows.js
       - name: Commit what changed
