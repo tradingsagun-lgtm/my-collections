@@ -18,12 +18,22 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
   const status = readJson(statusFile, {});
   let changed = 0, failed = 0;
 
+  // For the "not already in my rows" rule: every title in a row that is not live.
+  const liveFiles = new Set(rows.map(r => path.join('catalog', r.live.type, `${r.id}.json`)));
+  const handPicked = [];
+  for (const type of fs.existsSync(path.join(root, 'catalog')) ? fs.readdirSync(path.join(root, 'catalog')) : []) {
+    for (const f of fs.readdirSync(path.join(root, 'catalog', type))) {
+      if (liveFiles.has(path.join('catalog', type, f))) continue;
+      for (const m of readJson(path.join(root, 'catalog', type, f), { metas: [] }).metas || []) handPicked.push(m.id);
+    }
+  }
+
   for (const row of rows) {
     const sig = signature(row.live);
     const file = path.join(root, 'catalog', row.live.type, `${row.id}.json`);
     const before = readJson(file, { metas: [] }).metas || [];
     try {
-      const metas = await fetchList(row.live, before);
+      const metas = await fetchList(row.live, before, handPicked);
       const same = JSON.stringify(before.map(m => m.id)) === JSON.stringify(metas.map(m => m.id));
       if (!same || !status[row.id] || status[row.id].sig !== sig || status[row.id].error) {
         fs.mkdirSync(path.dirname(file), { recursive: true });

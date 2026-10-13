@@ -20,10 +20,14 @@ const LIMITS = [25, 50, 100];
 const FILTERS = {
   sinceYears: [0, 1, 2, 3, 5, 10],          // 0 = any year; 2 = this year and last year
   minRating: [0, 6, 6.5, 7, 7.5, 8],        // IMDb rating; unrated titles are dropped when above 0
+  maxRating: [0, 5, 6, 6.5, 7, 7.5, 8],     // 0 = no upper limit
+  runtimeMin: [0, 60, 90, 120],             // minutes; titles with no known runtime are dropped when set
+  runtimeMax: [0, 90, 120, 150, 180],       // 0 = no upper limit
   countries: ['South Korea', 'Japan', 'India', 'China', 'Hong Kong', 'Thailand', 'United Kingdom', 'United States',
     'France', 'Spain', 'Germany', 'Italy', 'Denmark', 'Sweden', 'Norway', 'Turkey', 'Mexico', 'Brazil', 'Australia', 'Canada'],
-  sort: { source: 'In list order', rating: 'Best rated first' }
+  sort: { source: 'In list order', rating: 'Best rated first', newest: 'Newest first', title: 'Title A–Z' }
 };
+const MAX_GENRES = 6;
 // How far down a list to look for titles that pass the rules: 20 pages is about
 // 1,000 titles. Movie pages are slow (about 2 seconds each), so this is also a time limit.
 const MAX_SCAN_PAGES = 20;
@@ -49,18 +53,36 @@ function normalise(def) {
   // "New this year" is filtered by year, so it cannot also take a genre.
   const genre = def.list === 'year' ? '' : String(def.genre || '').replace(/[^\w &-]/g, '').slice(0, 30);
   const pick = (value, allowed, fallback) => allowed.includes(value) ? value : fallback;
+  const year = value => { const n = Math.trunc(Number(value)); return n >= 1900 && n <= 2100 ? n : 0; };
+  const genres = value => [...new Set((Array.isArray(value) ? value : []).map(g => String(g).replace(/[^\w &-]/g, '').slice(0, 30)).filter(Boolean))].slice(0, MAX_GENRES);
   const country = pick(def.country, FILTERS.countries, '');
   return {
     source: 'cinemeta', list: def.list, type: def.type, genre, limit,
     sinceYears: pick(Number(def.sinceYears), FILTERS.sinceYears, 0),
+    yearFrom: year(def.yearFrom),                       // exact years; 0 = open-ended
+    yearTo: year(def.yearTo),
     minRating: pick(Number(def.minRating), FILTERS.minRating, 0),
+    maxRating: pick(Number(def.maxRating), FILTERS.maxRating, 0),
+    includeGenres: genres(def.includeGenres),           // must have every one of these as well
+    excludeGenres: genres(def.excludeGenres),           // must have none of these
     country,
     countryOnly: Boolean(country && def.countryOnly),   // true = made in that country alone, no co-productions
+    excludeCountries: (Array.isArray(def.excludeCountries) ? def.excludeCountries : []).filter(c => FILTERS.countries.includes(c) && c !== country),
+    runtimeMin: pick(Number(def.runtimeMin), FILTERS.runtimeMin, 0),
+    runtimeMax: pick(Number(def.runtimeMax), FILTERS.runtimeMax, 0),
+    excludeMyRows: Boolean(def.excludeMyRows),          // leave out titles already in the hand-picked rows
     sort: pick(def.sort, Object.keys(FILTERS.sort), 'source')
   };
 }
-const hasRules = d => Boolean(d.sinceYears || d.minRating || d.country || d.sort === 'rating');
-const signature = def => JSON.stringify(normalise(def));
+const hasRules = d => Boolean(d.sinceYears || d.yearFrom || d.yearTo || d.minRating || d.maxRating || d.includeGenres.length ||
+  d.excludeGenres.length || d.country || d.excludeCountries.length || d.runtimeMin || d.runtimeMax || d.excludeMyRows || d.sort !== 'source');
+// Identifies a definition. Rules left at "off" are omitted, so adding a new
+// kind of rule later does not change the signature of existing rows.
+const signature = def => {
+  const d = normalise(def);
+  const on = Object.keys(d).sort().filter(k => !(d[k] === 0 || d[k] === '' || d[k] === false || (Array.isArray(d[k]) && !d[k].length) || (k === 'sort' && d[k] === 'source')));
+  return JSON.stringify(Object.fromEntries(on.map(k => [k, d[k]])));
+};
 
 // "Popular thriller movies", "New series this year", "MDBList someone/some-list (series)"
 function describe(def) {
@@ -70,9 +92,15 @@ function describe(def) {
   const base = [LISTS[d.list].replace(' this year', ''), d.genre.toLowerCase(), kind, d.list === 'year' ? 'this year' : ''].filter(Boolean).join(' ');
   const rules = [
     d.sinceYears === 1 ? 'this year only' : d.sinceYears ? `last ${d.sinceYears} years` : '',
-    d.minRating ? `rated ${d.minRating}+` : '',
+    d.yearFrom && d.yearTo ? `${d.yearFrom}–${d.yearTo}` : d.yearFrom ? `from ${d.yearFrom}` : d.yearTo ? `up to ${d.yearTo}` : '',
+    d.minRating && d.maxRating ? `rated ${d.minRating}–${d.maxRating}` : d.minRating ? `rated ${d.minRating}+` : d.maxRating ? `rated up to ${d.maxRating}` : '',
+    d.includeGenres.length ? 'also ' + d.includeGenres.join(' + ').toLowerCase() : '',
+    d.excludeGenres.length ? 'no ' + d.excludeGenres.join(', ').toLowerCase() : '',
     d.country ? d.country + (d.countryOnly ? ' only' : ' incl. co-productions') : '',
-    d.sort === 'rating' ? 'best rated first' : ''
+    d.excludeCountries.length ? 'not ' + d.excludeCountries.join(', ') : '',
+    d.runtimeMin && d.runtimeMax ? `${d.runtimeMin}–${d.runtimeMax} min` : d.runtimeMin ? `${d.runtimeMin}+ min` : d.runtimeMax ? `up to ${d.runtimeMax} min` : '',
+    d.excludeMyRows ? 'not already in my rows' : '',
+    d.sort !== 'source' ? FILTERS.sort[d.sort].toLowerCase() : ''
   ].filter(Boolean);
   return [base, ...rules].join(', ');
 }
@@ -90,20 +118,33 @@ const preview = (m, type) => ({
   director: m.director, description: m.description
 });
 
-async function fetchCinemetaList(d) {
+async function fetchCinemetaList(d, exclude) {
   const filter = d.list === 'year' ? `genre=${new Date().getFullYear()}` : d.genre ? `genre=${encodeURIComponent(d.genre)}` : '';
   // The rules of this row. A series counts by the year it started.
   const firstYear = new Date().getFullYear() - d.sinceYears + 1;
+  const yearOf = m => parseInt(m.releaseInfo, 10) || Number(m.year) || 0;
   const passes = m => {
-    if (d.sinceYears && !((parseInt(m.releaseInfo, 10) || Number(m.year) || 0) >= firstYear)) return false;
-    if (d.minRating && !(parseFloat(m.imdbRating) >= d.minRating)) return false;
-    if (d.country) {
+    const year = yearOf(m);
+    if (d.sinceYears && !(year >= firstYear)) return false;
+    if (d.yearFrom && !(year >= d.yearFrom)) return false;
+    if (d.yearTo && !(year && year <= d.yearTo)) return false;
+    const rating = parseFloat(m.imdbRating);
+    if (d.minRating && !(rating >= d.minRating)) return false;
+    if (d.maxRating && !(rating <= d.maxRating)) return false;
+    const has = m.genres || m.genre || [];
+    if (!d.includeGenres.every(g => has.includes(g)) || d.excludeGenres.some(g => has.includes(g))) return false;
+    if (d.country || d.excludeCountries.length) {
       const made = String(m.country || '').split(',').map(s => s.trim()).filter(Boolean);
-      if (!made.includes(d.country) || (d.countryOnly && made.length !== 1)) return false;
+      if (d.country && (!made.includes(d.country) || (d.countryOnly && made.length !== 1))) return false;
+      if (d.excludeCountries.some(c => made.includes(c))) return false;
     }
+    const minutes = parseInt(m.runtime, 10);
+    if (d.runtimeMin && !(minutes >= d.runtimeMin)) return false;
+    if (d.runtimeMax && !(minutes <= d.runtimeMax)) return false;
+    if (d.excludeMyRows && exclude.has(m.id)) return false;
     return true;
   };
-  const byRating = d.sort === 'rating';
+  const byRating = d.sort !== 'source';   // any re-ordering needs the whole pool first
   const maxPages = hasRules(d) ? MAX_SCAN_PAGES : Math.ceil(d.limit / 50) + 2;
   const metas = [];
   const seen = new Set();
@@ -119,7 +160,9 @@ async function fetchCinemetaList(d) {
       if (!byRating && metas.length >= d.limit) break;
     }
   }
-  if (byRating) metas.sort((a, b) => (parseFloat(b.imdbRating) || 0) - (parseFloat(a.imdbRating) || 0));
+  if (d.sort === 'rating') metas.sort((a, b) => (parseFloat(b.imdbRating) || 0) - (parseFloat(a.imdbRating) || 0));
+  if (d.sort === 'newest') metas.sort((a, b) => yearOf(b) - yearOf(a));
+  if (d.sort === 'title') metas.sort((a, b) => a.name.localeCompare(b.name));
   return metas.slice(0, d.limit);
 }
 
@@ -159,10 +202,11 @@ async function fetchMdblist(d, known) {
 
 // Fetches the current titles for a definition, in the source's order.
 // previous: the titles from the last refresh, reused where a source needs per-title lookups.
-async function fetchList(def, previous = []) {
+// excludeIds: ids of the titles in the hand-picked rows, for the "not already in my rows" rule.
+async function fetchList(def, previous = [], excludeIds = []) {
   const d = normalise(def);
   const known = Object.fromEntries(previous.filter(m => m && m.id && m.poster && m.type === d.type).map(m => [m.id, m]));
-  const metas = d.source === 'mdblist' ? await fetchMdblist(d, known) : await fetchCinemetaList(d);
+  const metas = d.source === 'mdblist' ? await fetchMdblist(d, known) : await fetchCinemetaList(d, new Set(excludeIds));
   if (!metas.length) throw new Error('source returned no titles');
   return metas;
 }
