@@ -25,7 +25,7 @@ const SOURCES = { index: 'Our own index (every title)', wikipedia: 'Latest relea
 // Rules that narrow a source into a list of our own, e.g. "popular series from
 // the last two years" or "top rated Korean-language thrillers".
 const FILTERS = {
-  sinceYears: [0, 1, 2, 3, 5, 10],          // 0 = any year; 2 = this year and last year
+  sinceYears: [0, 1, 2, 3, 5, 10, 15, 20, 30],   // 0 = any year; 2 = this year and last year
   minRating: [0, 6, 6.5, 7, 7.5, 8],        // IMDb rating; unrated titles are dropped when above 0
   maxRating: [0, 5, 6, 6.5, 7, 7.5, 8],     // 0 = no upper limit
   runtimeMin: [0, 60, 90, 120],             // minutes; titles with no known runtime are dropped when set
