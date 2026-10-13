@@ -7,13 +7,17 @@
 // catalog/<type>/<row>.json and live-status.json only where something changed.
 const fs = require('fs');
 const path = require('path');
-const { fetchList, signature } = require('./live-source');
+const { fetchList, signature, titleLine, plainName } = require('./live-source');
 
 const root = path.join(__dirname, '..');
 const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return fallback; } };
 
 (async () => {
-  const { rows = [] } = readJson(path.join(root, 'live-rows.json'), {});
+  const settings = readJson(path.join(root, 'live-rows.json'), {});
+  const { rows = [] } = settings;
+  // Rating and year in front of each name, exactly as the PC writes them for the hand-picked rows.
+  const named = m => ({ ...m, name: settings.titleLine !== false ? titleLine(m) : plainName(m.name) });
+  const shown = list => JSON.stringify(list.map(m => [m.id, m.name]));
   const statusFile = path.join(root, 'live-status.json');
   const status = readJson(statusFile, {});
   let changed = 0, failed = 0;
@@ -36,8 +40,8 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
       // Pinned picks (hand-picked on the PC) stay on top; the rules fill in below without repeating them.
       const pinned = (row.pinned || []).filter(m => m.type === row.live.type);
       const pinIds = new Set(pinned.map(m => m.id));
-      const metas = [...pinned, ...(await fetchList(row.live, before, handPicked)).filter(m => !pinIds.has(m.id))];
-      const same = JSON.stringify(before.map(m => m.id)) === JSON.stringify(metas.map(m => m.id));
+      const metas = [...pinned, ...(await fetchList(row.live, before, handPicked)).filter(m => !pinIds.has(m.id))].map(named);
+      const same = shown(before) === shown(metas);   // the same titles, in the same order, with the same labels
       if (!same || !status[row.id] || status[row.id].sig !== sig || status[row.id].error) {
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, JSON.stringify({ metas }));

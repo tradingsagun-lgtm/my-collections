@@ -13,7 +13,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { ratedPosterFile, plainPoster } = require('./live-source');
+const { ratedPosterFile, isRatedPoster, plainPoster } = require('./live-source');
 
 const root = path.join(__dirname, '..');
 const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return fallback; } };
@@ -49,7 +49,7 @@ async function makePoster(meta, outFile, tmpDir) {
   const cy = BADGE.y + BADGE.h / 2;
   execFileSync('convert', [
     src, '-resize', `${W}x${H}^`, '-gravity', 'center', '-extent', `${W}x${H}`,
-    '-gravity', 'NorthWest',
+    '+gravity',   // back to plain coordinates: text is then placed by its baseline
     '-fill', 'rgba(0,0,0,0.78)', '-draw', `roundrectangle ${BADGE.x},${BADGE.y} ${BADGE.x + BADGE.w},${BADGE.y + BADGE.h} 14,14`,
     '-fill', '#F5C518', '-draw', star(BADGE.x + 26, cy, 14, 6),
     ...(FONT ? ['-font', FONT] : []), '-pointsize', '30', '-fill', 'white', '-draw', `text ${BADGE.x + 48},${cy + 11} '${rating}'`,
@@ -59,7 +59,9 @@ async function makePoster(meta, outFile, tmpDir) {
 }
 
 (async () => {
-  const wanted = readJson(path.join(root, 'live-rows.json'), {}).ratingPosters !== false;
+  const settings = readJson(path.join(root, 'live-rows.json'), {});
+  const wanted = settings.ratingPosters === true;   // off unless switched on: the title line carries the rating instead
+  const batch = Number(settings.posterBatch) > 0 ? Number(settings.posterBatch) : 1500;   // new posters per run; the rest wait for the next run
   const site = siteUrl();
   const postersDir = path.join(root, 'posters');
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'posters-'));
@@ -81,7 +83,7 @@ async function makePoster(meta, outFile, tmpDir) {
       let poster = meta.poster;
       if (name) {
         const out = path.join(root, name);
-        if (!fs.existsSync(out) && !failed.has(name)) {
+        if (!fs.existsSync(out) && !failed.has(name) && made < batch) {
           try { fs.mkdirSync(postersDir, { recursive: true }); await makePoster(meta, out, tmpDir); made++; }
           catch (e) {
             failed.add(name); fs.rmSync(out, { force: true });
@@ -93,7 +95,7 @@ async function makePoster(meta, outFile, tmpDir) {
         if (fs.existsSync(out)) { poster = `${site}/${name}`; used.add(path.basename(name)); pointed++; }
       }
       // No rated poster for this title (switched off, unrated, or it failed): never leave it pointing at one of ours.
-      if (!used.has(path.basename(String(poster || ''))) && /\/posters\/tt\d+-\d+\.jpg$/.test(poster || '')) poster = plainPoster(meta.id);
+      if (!used.has(path.basename(String(poster || ''))) && isRatedPoster(poster)) poster = plainPoster(meta.id);
       if (poster !== meta.poster) { meta.poster = poster; changed = true; }
     }
     if (changed) { fs.writeFileSync(file, JSON.stringify(doc)); rewritten++; }

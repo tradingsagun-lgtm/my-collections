@@ -347,16 +347,31 @@ async function genreOptions() {
   return Object.fromEntries(TYPES.map(t => [t, (genresFor(t) || {}).options || []]));
 }
 
+// ---- rating and year in the title line ----
+// Stremio shows a title's name under its poster, so the rating and year are put
+// in front of it there: "★ 7.6 · 2016 · Train to Busan". Rating first, because
+// long lines are cut off on a TV. Only the label in our rows changes; a title's
+// own page in Stremio takes its name from Stremio's metadata.
+const LABEL = /^(?:★ \d+(?:\.\d)? · )?(?:\d{4} · )?/;
+const plainName = name => String(name || '').replace(LABEL, '');   // also undoes a label, so it is never applied twice
+function titleLine(meta) {
+  const rating = parseFloat(meta.imdbRating);
+  const year = (String(meta.releaseInfo || '').match(/\d{4}/) || [])[0];
+  return [rating > 0 ? `★ ${rating.toFixed(1)}` : '', year || '', plainName(meta.name)].filter(Boolean).join(' · ');
+}
+
 // ---- rating posters ----
 // The poster with a title's rating drawn on it is made by the job on GitHub
 // (tools/rate-posters.js) and stored under this name. The rating is part of the
 // name, so a changed rating is a new file and no device keeps showing the old one.
+const POSTER_STYLE = 2;   // raise when the drawing in rate-posters.js changes
 function ratedPosterFile(meta) {
   const rating = parseFloat(meta && meta.imdbRating);
   if (!meta || !/^tt\d+$/.test(meta.id || '') || !(rating > 0)) return null;
-  return `posters/${meta.id}-${Math.round(rating * 10)}.jpg`;
+  return `posters/${meta.id}-${Math.round(rating * 10)}-s${POSTER_STYLE}.jpg`;
 }
+const isRatedPoster = url => /\/posters\/tt\d+-[\w-]+\.jpg$/.test(url || '');
 // The ordinary poster for a title, by IMDb id.
 const plainPoster = id => `https://images.metahub.space/poster/medium/${id}/img`;
 
-module.exports = { ratedPosterFile, plainPoster, SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
+module.exports = { titleLine, plainName, ratedPosterFile, isRatedPoster, plainPoster, SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
