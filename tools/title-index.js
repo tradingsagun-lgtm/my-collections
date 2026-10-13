@@ -36,6 +36,15 @@ const LANGUAGES = {
   Chinese: 'Q7850', Cantonese: 'Q9186', Thai: 'Q9217', English: 'Q1860', French: 'Q150', Spanish: 'Q1321',
   German: 'Q188', Italian: 'Q652', Danish: 'Q9035', Swedish: 'Q9027', Norwegian: 'Q9043', Turkish: 'Q256', Portuguese: 'Q5146'
 };
+// Streaming platforms, by Wikidata id (labels checked 14 October 2026). Wikidata
+// records the platform a title was made for or distributed by (original
+// broadcaster P449, distributor P750). That is "originals and exclusives", not
+// what a service carries today in any one country.
+const PLATFORMS = {
+  Netflix: ['Q907311'], 'Prime Video': ['Q4740856'], 'Disney+': ['Q54958752'], 'Apple TV+': ['Q62446736'],
+  'HBO and HBO Max': ['Q65359104', 'Q23633'], Hulu: ['Q1630304'], 'Paramount+': ['Q27903045'], Peacock: ['Q67765302'],
+  JioHotstar: ['Q19758675'], SonyLIV: ['Q17021043'], ZEE5: ['Q51328854']
+};
 const GENRES = ['Action', 'Adventure', 'Animation', 'Biography', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy',
   'Film-Noir', 'History', 'Horror', 'Music', 'Musical', 'Mystery', 'Reality-TV', 'Romance', 'Sci-Fi', 'Sport', 'Thriller', 'War', 'Western'];
 
@@ -126,16 +135,20 @@ function loadIndex(dir = defaultDir()) {
     ({ id, type: t === 'm' ? 'movie' : 'series', name, year, endYear, runtime, genres: genres ? genres.split(',') : [], rating, votes }));
 }
 
-// The IMDb ids of everything Wikidata lists for a country of origin (P495) or
-// an original language (P364). Kept for a week; an older copy is used if Wikidata is down.
+// The IMDb ids of everything Wikidata lists for a country of origin (P495), an
+// original language (P364), or a platform (original broadcaster or distributor). Kept for a week; an older copy is used if Wikidata is down.
 async function wikidataSet(kind, name, dir = defaultDir()) {
-  const qid = (kind === 'country' ? COUNTRIES : LANGUAGES)[name];
-  if (!qid) throw new Error(`unknown ${kind}: ${name}`);
+  const found = { country: COUNTRIES, language: LANGUAGES, platform: PLATFORMS }[kind][name];
+  if (!found) throw new Error(`unknown ${kind}: ${name}`);
+  const qids = [].concat(found);
+  const qid = qids.join('-');
   const file = path.join(dir, `wikidata-${kind}-${qid}.json`);
   const cached = (() => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return null; } })();
   if (cached && Date.now() - Date.parse(cached.fetchedAt) < SET_MAX_AGE_MS) return new Set(cached.ids);
   try {
-    const query = `SELECT DISTINCT ?i WHERE { ?f wdt:${kind === 'country' ? 'P495' : 'P364'} wd:${qid} ; wdt:P345 ?i . }`;
+    const query = kind === 'platform'
+      ? `SELECT DISTINCT ?i WHERE { VALUES ?p { ${qids.map(q => 'wd:' + q).join(' ')} } { ?f wdt:P449 ?p } UNION { ?f wdt:P750 ?p } ?f wdt:P345 ?i . }`
+      : `SELECT DISTINCT ?i WHERE { ?f wdt:${kind === 'country' ? 'P495' : 'P364'} wd:${qid} ; wdt:P345 ?i . }`;
     const res = await fetch('https://query.wikidata.org/sparql?query=' + encodeURIComponent(query),
       { headers: { 'User-Agent': 'stremio-collections (personal use)', Accept: 'application/sparql-results+json' } });
     if (!res.ok) throw new Error(`Wikidata answered ${res.status}`);
@@ -227,7 +240,7 @@ async function wikipediaFilms(language, year, dir = defaultDir()) {
   }
 }
 
-module.exports = { MIN_VOTES, COUNTRIES, LANGUAGES, GENRES, WIKIPEDIA_LANGUAGES, defaultDir, ensureIndex, loadIndex, wikidataSet, wikipediaFilms, summaryOf };
+module.exports = { MIN_VOTES, COUNTRIES, LANGUAGES, PLATFORMS, GENRES, WIKIPEDIA_LANGUAGES, defaultDir, ensureIndex, loadIndex, wikidataSet, wikipediaFilms, summaryOf };
 
 // Run as "node title-index.js build <dir>" by ensureIndex().
 if (require.main === module && process.argv[2] === 'build') {

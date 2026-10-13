@@ -35,6 +35,7 @@ const FILTERS = {
   // Only for the index source:
   minVotes: [100, 1000, 5000, 10000, 25000, 100000],   // how well known a title must be
   languages: Object.keys(titleIndex.LANGUAGES),
+  platforms: Object.keys(titleIndex.PLATFORMS),       // made for or distributed by; not current availability
   indexGenres: titleIndex.GENRES,
   indexSort: { votes: 'Most voted first', rating: 'Best rated first', newest: 'Newest first', title: 'Title A–Z' },
   // Only for the latest-releases source:
@@ -99,6 +100,7 @@ function normalise(def) {
       source: 'index', type: def.type, limit, ...rulesOf(def),
       minVotes: pick(Number(def.minVotes), FILTERS.minVotes, 1000),
       language: pick(def.language, FILTERS.languages, ''),   // original language
+      platform: pick(def.platform, FILTERS.platforms, ''),   // made for or distributed by this platform
       sort: pick(def.sort, Object.keys(FILTERS.indexSort), 'votes')
     };
   }
@@ -131,6 +133,7 @@ function ruleWords(d) {
     d.minRating && d.maxRating ? `rated ${d.minRating}–${d.maxRating}` : d.minRating ? `rated ${d.minRating}+` : d.maxRating ? `rated up to ${d.maxRating}` : '',
     d.includeGenres.length ? (d.source === 'index' ? '' : 'also ') + d.includeGenres.join(' + ').toLowerCase() : '',
     d.excludeGenres.length ? 'no ' + d.excludeGenres.join(', ').toLowerCase() : '',
+    d.platform ? `${d.platform} originals and exclusives` : '',
     d.language ? `${d.language}-language` : '',
     d.country ? d.country + (d.source === 'index' ? '' : d.countryOnly ? ' only' : ' incl. co-productions') : '',
     d.excludeCountries.length ? 'not ' + d.excludeCountries.join(', ') : '',
@@ -202,6 +205,7 @@ async function fetchIndexList(d, known, exclude) {
       for (let y = to; y >= from; y--) for (const film of await titleIndex.wikipediaFilms(d.language, y)) inLanguage.add(film.id);
     }
   }
+  const onPlatform = d.platform ? await titleIndex.wikidataSet('platform', d.platform) : null;
   const notCountries = await Promise.all(d.excludeCountries.map(c => titleIndex.wikidataSet('country', c)));
   const firstYear = new Date().getFullYear() - d.sinceYears + 1;
   const picked = titleIndex.loadIndex().filter(t =>
@@ -210,7 +214,7 @@ async function fetchIndexList(d, known, exclude) {
     (!d.minRating || t.rating >= d.minRating) && (!d.maxRating || t.rating <= d.maxRating) &&
     d.includeGenres.every(g => t.genres.includes(g)) && !d.excludeGenres.some(g => t.genres.includes(g)) &&
     (!d.runtimeMin || t.runtime >= d.runtimeMin) && (!d.runtimeMax || (t.runtime && t.runtime <= d.runtimeMax)) &&
-    (!inCountry || inCountry.has(t.id)) && (!inLanguage || inLanguage.has(t.id)) && !notCountries.some(s => s.has(t.id)) &&
+    (!inCountry || inCountry.has(t.id)) && (!inLanguage || inLanguage.has(t.id)) && (!onPlatform || onPlatform.has(t.id)) && !notCountries.some(s => s.has(t.id)) &&
     !(d.excludeMyRows && exclude.has(t.id)));
   const order = {
     votes: (a, b) => b.votes - a.votes,
