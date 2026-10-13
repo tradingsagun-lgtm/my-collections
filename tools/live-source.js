@@ -19,7 +19,7 @@ const LISTS = {
   year: 'New this year',
   imdbRating: 'Top rated'
 };
-const LIMITS = [25, 50, 100, 200];
+const LIMITS = [25, 50, 100, 200, 300];
 const SOURCES = { index: 'Our own index (every title)', wikipedia: 'Latest releases by language', cinemeta: "Stremio's own lists", mdblist: 'A public MDBList list' };
 
 // Rules that narrow a source into a list of our own, e.g. "popular series from
