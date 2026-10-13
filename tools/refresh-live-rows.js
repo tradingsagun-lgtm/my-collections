@@ -23,7 +23,7 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
     const file = path.join(root, 'catalog', row.live.type, `${row.id}.json`);
     const before = readJson(file, { metas: [] }).metas || [];
     try {
-      const metas = await fetchList(row.live);
+      const metas = await fetchList(row.live, before);
       const same = JSON.stringify(before.map(m => m.id)) === JSON.stringify(metas.map(m => m.id));
       if (!same || !status[row.id] || status[row.id].sig !== sig || status[row.id].error) {
         fs.mkdirSync(path.dirname(file), { recursive: true });
