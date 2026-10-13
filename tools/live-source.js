@@ -6,6 +6,8 @@
 // Sources (see docs/sources.md):
 //   index     Our own index of every movie and series (IMDb data files), with
 //             country and language from Wikidata. No key.
+//   wikipedia Latest releases in one language, from Wikipedia's yearly film lists,
+//             matched to our index. No key.
 //   cinemeta  Stremio's own lists: Popular, New this year, Top rated. No key.
 //   mdblist   Any PUBLIC list on mdblist.com, read through its JSON export. No key.
 const titleIndex = require('./title-index');
@@ -18,7 +20,7 @@ const LISTS = {
   imdbRating: 'Top rated'
 };
 const LIMITS = [25, 50, 100];
-const SOURCES = { index: 'Our own index (every title)', cinemeta: "Stremio's own lists", mdblist: 'A public MDBList list' };
+const SOURCES = { index: 'Our own index (every title)', wikipedia: 'Latest releases by language', cinemeta: "Stremio's own lists", mdblist: 'A public MDBList list' };
 
 // Rules that narrow a source into a list of our own, e.g. "popular series from
 // the last two years" or "top rated Korean-language thrillers".
@@ -34,7 +36,9 @@ const FILTERS = {
   minVotes: [100, 1000, 5000, 25000, 100000],   // how well known a title must be
   languages: Object.keys(titleIndex.LANGUAGES),
   indexGenres: titleIndex.GENRES,
-  indexSort: { votes: 'Most voted first', rating: 'Best rated first', newest: 'Newest first', title: 'Title A–Z' }
+  indexSort: { votes: 'Most voted first', rating: 'Best rated first', newest: 'Newest first', title: 'Title A–Z' },
+  // Only for the latest-releases source:
+  releaseLanguages: titleIndex.WIKIPEDIA_LANGUAGES
 };
 const MAX_GENRES = 6;
 // How far down one of Stremio's lists to look for titles that pass the rules:
@@ -79,6 +83,16 @@ function normalise(def) {
   if (def.source === 'mdblist') {
     const { user, slug } = def.url ? parseMdblist(def.url) : parseMdblist(`${def.user}/${def.slug}`);
     return { source: 'mdblist', user, slug, type: def.type, limit };
+  }
+  if (def.source === 'wikipedia') {
+    if (!FILTERS.releaseLanguages.includes(def.language)) throw new Error('choose a language for the latest-releases row');
+    if (def.type !== 'movie') throw new Error('latest releases are available for movies only');
+    return {
+      source: 'wikipedia', type: 'movie', limit, language: def.language,
+      minRating: pick(Number(def.minRating), FILTERS.minRating, 0),
+      minVotes: pick(Number(def.minVotes), FILTERS.minVotes, 100),
+      excludeMyRows: Boolean(def.excludeMyRows)
+    };
   }
   if (def.source === 'index') {
     return {
@@ -130,6 +144,8 @@ function describe(def) {
   const d = normalise(def);
   const kind = d.type === 'movie' ? 'movies' : 'series';
   if (d.source === 'mdblist') return `MDBList ${d.user}/${d.slug} (${kind})`;
+  if (d.source === 'wikipedia') return [`Latest ${d.language} movies, newest release first`, d.minRating ? `rated ${d.minRating}+` : '',
+    d.minVotes > 100 ? `${d.minVotes.toLocaleString('en')}+ votes` : '', d.excludeMyRows ? 'not already in my rows' : ''].filter(Boolean).join(', ');
   if (d.source === 'index') return [`Our index: ${kind}`, ...ruleWords(d), `${d.minVotes.toLocaleString('en')}+ votes`, FILTERS.indexSort[d.sort].toLowerCase()].join(', ');
   const base = [LISTS[d.list].replace(' this year', ''), d.genre.toLowerCase(), kind, d.list === 'year' ? 'this year' : ''].filter(Boolean).join(' ');
   return [base, ...ruleWords(d), d.sort !== 'source' ? FILTERS.sort[d.sort].toLowerCase() : ''].filter(Boolean).join(', ');
@@ -194,8 +210,35 @@ async function fetchIndexList(d, known, exclude) {
     name: top[i].name, genres: top[i].genres,
     releaseInfo: d.type !== 'series' || top[i].endYear === top[i].year ? String(top[i].year) : `${top[i].year}–${top[i].endYear || ''}`
   }));
-  // The index is refreshed daily, so its rating is the current one.
-  return metas.map((m, i) => ({ ...m, imdbRating: String(top[i].rating) }));
+  // The index is refreshed daily, so its title and rating are the current ones.
+  return metas.map((m, i) => ({ ...m, name: top[i].name, imdbRating: String(top[i].rating) }));
+}
+
+// ---- source: latest releases in one language ----
+// Wikipedia's lists for this year and last say which films exist and when they
+// released; our index says which of them are real, rated movies. A film shows
+// up once it has released and has at least 100 IMDb votes.
+async function fetchLatestReleases(d, known, exclude) {
+  const year = new Date().getFullYear();
+  const today = new Date().toISOString().slice(0, 10);
+  const listed = [...await titleIndex.wikipediaFilms(d.language, year), ...await titleIndex.wikipediaFilms(d.language, year - 1)];
+  await titleIndex.ensureIndex();
+  const index = new Map(titleIndex.loadIndex().map(t => [t.id, t]));
+  const seen = new Set();
+  const picked = [];
+  for (const film of listed) {
+    const t = index.get(film.id);
+    if (!t || t.type !== 'movie' || seen.has(film.id)) continue;
+    seen.add(film.id);
+    if (t.year < year - 1 || t.votes < d.minVotes || (d.minRating && t.rating < d.minRating)) continue;
+    if (film.date && film.date > today) continue;                 // announced, not out yet
+    if (d.excludeMyRows && exclude.has(film.id)) continue;
+    // No known date: place it at the start of its year.
+    picked.push({ ...t, released: film.date && !film.date.endsWith('-00') ? film.date : `${t.year}-00-00` });
+  }
+  const top = picked.sort((a, b) => b.released.localeCompare(a.released) || b.votes - a.votes).slice(0, d.limit);
+  const metas = await enrich(top.map(t => t.id), 'movie', known, i => ({ name: top[i].name, genres: top[i].genres, releaseInfo: String(top[i].year) }));
+  return metas.map((m, i) => ({ ...m, name: top[i].name, releaseInfo: String(top[i].year), imdbRating: String(top[i].rating) }));
 }
 
 // ---- source: Stremio's own lists ----
@@ -274,6 +317,7 @@ async function fetchList(def, previous = [], excludeIds = []) {
   const exclude = new Set(excludeIds);
   const metas = d.source === 'mdblist' ? await fetchMdblist(d, known)
     : d.source === 'index' ? await fetchIndexList(d, known, exclude)
+    : d.source === 'wikipedia' ? await fetchLatestReleases(d, known, exclude)
     : await fetchCinemetaList(d, exclude);
   if (!metas.length) throw new Error('source returned no titles');
   return metas;

@@ -150,7 +150,79 @@ async function wikidataSet(kind, name, dir = defaultDir()) {
   }
 }
 
-module.exports = { MIN_VOTES, COUNTRIES, LANGUAGES, GENRES, defaultDir, ensureIndex, loadIndex, wikidataSet, summaryOf };
+// ---- latest releases by language, from Wikipedia's yearly film lists ----
+// Wikipedia keeps a page per language and year ("List of Hindi films of 2026")
+// that editors update as films release. It knows about new regional films long
+// before Wikidata records their language, which is why this exists.
+const WIKIPEDIA_LANGUAGES = ['Hindi', 'Tamil', 'Malayalam', 'Telugu', 'Kannada', 'Bengali', 'Marathi', 'Punjabi'];
+const LIST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const WIKI_AGENT = { 'User-Agent': 'stremio-collections (personal catalogue tool; a few requests a day)' };
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// One request at a time with a pause before each, and a wait-and-retry when asked to slow down.
+async function politeJson(url, options = {}) {
+  for (let attempt = 1; ; attempt++) {
+    await pause(500);
+    const res = await fetch(url, { ...options, headers: { ...WIKI_AGENT, ...(options.headers || {}) } });
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch (e) {
+      if (attempt >= 4) throw new Error(`${new URL(url).host} would not answer (${res.status})`);
+      await pause(5000 * attempt);
+    }
+  }
+}
+
+// The films on one yearly list page that have an IMDb id, with their earliest
+// release date where Wikidata has one: [{ id, date }]. Empty if the page does not exist.
+async function crawlFilmList(language, year) {
+  const page = `List of ${language} films of ${year}`;
+  // 1. Every article the list links to, with its Wikidata item (films, but also actors, directors, studios…).
+  const items = new Set();
+  let more = {};
+  for (let i = 0; i < 12; i++) {
+    const j = await politeJson('https://en.wikipedia.org/w/api.php?' + new URLSearchParams({
+      format: 'json', action: 'query', generator: 'links', titles: page, gplnamespace: '0', gpllimit: '500',
+      prop: 'pageprops', ppprop: 'wikibase_item', redirects: '1', ...more
+    }));
+    for (const p of Object.values((j.query || {}).pages || {})) if (p.pageprops && p.pageprops.wikibase_item) items.add(p.pageprops.wikibase_item);
+    if (!j.continue) break;
+    more = j.continue;
+  }
+  // 2. Of those, the ones Wikidata gives an IMDb title id: that keeps the films and drops the people.
+  const films = new Map();
+  const all = [...items].filter(q => /^Q\d+$/.test(q));
+  for (let i = 0; i < all.length; i += 400) {
+    const query = `SELECT ?item ?imdb (MIN(?d) AS ?date) WHERE { VALUES ?item { ${all.slice(i, i + 400).map(q => 'wd:' + q).join(' ')} } ?item wdt:P345 ?imdb . OPTIONAL { ?item wdt:P577 ?d } } GROUP BY ?item ?imdb`;
+    const j = await politeJson('https://query.wikidata.org/sparql', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/sparql-results+json' },
+      body: 'query=' + encodeURIComponent(query)
+    });
+    for (const b of j.results.bindings) {
+      if (/^tt\d+$/.test(b.imdb.value) && !films.has(b.imdb.value)) films.set(b.imdb.value, b.date ? b.date.value.slice(0, 10) : null);
+    }
+  }
+  return [...films].map(([id, date]) => ({ id, date }));
+}
+
+// crawlFilmList, kept for a day; an older copy is used if Wikipedia or Wikidata is unreachable.
+async function wikipediaFilms(language, year, dir = defaultDir()) {
+  if (!WIKIPEDIA_LANGUAGES.includes(language)) throw new Error(`no Wikipedia film list for: ${language}`);
+  const file = path.join(dir, `wikipedia-films-${language}-${year}.json`);
+  const cached = (() => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return null; } })();
+  if (cached && Date.now() - Date.parse(cached.fetchedAt) < LIST_MAX_AGE_MS) return cached.films;
+  try {
+    const films = await crawlFilmList(language, year);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ fetchedAt: new Date().toISOString(), films }));
+    return films;
+  } catch (e) {
+    if (cached) return cached.films;
+    throw e;
+  }
+}
+
+module.exports = { MIN_VOTES, COUNTRIES, LANGUAGES, GENRES, WIKIPEDIA_LANGUAGES, defaultDir, ensureIndex, loadIndex, wikidataSet, wikipediaFilms, summaryOf };
 
 // Run as "node title-index.js build <dir>" by ensureIndex().
 if (require.main === module && process.argv[2] === 'build') {
