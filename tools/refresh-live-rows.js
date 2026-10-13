@@ -33,7 +33,10 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
     const file = path.join(root, 'catalog', row.live.type, `${row.id}.json`);
     const before = readJson(file, { metas: [] }).metas || [];
     try {
-      const metas = await fetchList(row.live, before, handPicked);
+      // Pinned picks (hand-picked on the PC) stay on top; the rules fill in below without repeating them.
+      const pinned = (row.pinned || []).filter(m => m.type === row.live.type);
+      const pinIds = new Set(pinned.map(m => m.id));
+      const metas = [...pinned, ...(await fetchList(row.live, before, handPicked)).filter(m => !pinIds.has(m.id))];
       const same = JSON.stringify(before.map(m => m.id)) === JSON.stringify(metas.map(m => m.id));
       if (!same || !status[row.id] || status[row.id].sig !== sig || status[row.id].error) {
         fs.mkdirSync(path.dirname(file), { recursive: true });
