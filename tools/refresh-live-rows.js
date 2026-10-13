@@ -7,7 +7,7 @@
 // catalog/<type>/<row>.json and live-status.json only where something changed.
 const fs = require('fs');
 const path = require('path');
-const { fetchList, signature, titleLine, plainName } = require('./live-source');
+const { fetchList, signature, titleLine, plainName, rowFiles } = require('./live-source');
 
 const root = path.join(__dirname, '..');
 const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return fallback; } };
@@ -23,9 +23,14 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
   let changed = 0, failed = 0;
 
   // For the "not already in my rows" rule: every title in a row that is not live.
-  const liveFiles = new Set(rows.map(r => path.join('catalog', r.live.type, `${r.id}.json`)));
+  // Rows are published under their type (movie, series) or, with a Discover entry of our own, under its name.
+  const folderOf = row => settings.catalogType || row.live.type;
+  const liveFiles = new Set(rows.map(r => path.join('catalog', folderOf(r), `${r.id}.json`)));
   const handPicked = [];
-  for (const type of fs.existsSync(path.join(root, 'catalog')) ? fs.readdirSync(path.join(root, 'catalog')) : []) {
+  // With a Discover entry of our own, only its folder counts: the movie and series folders then
+  // hold copies kept for devices that have not reinstalled the addon yet.
+  const folders = settings.catalogType ? [settings.catalogType] : fs.existsSync(path.join(root, 'catalog')) ? fs.readdirSync(path.join(root, 'catalog')) : [];
+  for (const type of folders.filter(t => fs.existsSync(path.join(root, 'catalog', t)))) {
     for (const f of fs.readdirSync(path.join(root, 'catalog', type))) {
       if (liveFiles.has(path.join('catalog', type, f))) continue;
       for (const m of readJson(path.join(root, 'catalog', type, f), { metas: [] }).metas || []) handPicked.push(m.id);
@@ -34,17 +39,22 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
 
   for (const row of rows) {
     const sig = signature(row.live);
-    const file = path.join(root, 'catalog', row.live.type, `${row.id}.json`);
+    const folder = path.join(root, 'catalog', folderOf(row));
+    const file = path.join(folder, `${row.id}.json`);
     const before = readJson(file, { metas: [] }).metas || [];
     try {
       // Pinned picks (hand-picked on the PC) stay on top; the rules fill in below without repeating them.
-      const pinned = (row.pinned || []).filter(m => m.type === row.live.type);
+      // Under a Discover entry of our own, a row holds every type; otherwise only the row's own type lives in this file.
+      const pinned = (row.pinned || []).filter(m => settings.catalogType || m.type === row.live.type);
       const pinIds = new Set(pinned.map(m => m.id));
       const metas = [...pinned, ...(await fetchList(row.live, before, handPicked)).filter(m => !pinIds.has(m.id))].map(named);
       const same = shown(before) === shown(metas);   // the same titles, in the same order, with the same labels
       if (!same || !status[row.id] || status[row.id].sig !== sig || status[row.id].error) {
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, JSON.stringify({ metas }));
+        // The row and, with the genre filter on, one file per genre: the same layout the PC writes.
+        for (const [name, list] of Object.entries(rowFiles(row.id, metas, settings.genreFilter === true))) {
+          fs.mkdirSync(path.dirname(path.join(folder, name)), { recursive: true });
+          fs.writeFileSync(path.join(folder, name), JSON.stringify({ metas: list }));
+        }
         status[row.id] = { sig, updatedAt: new Date().toISOString(), error: null };
         changed++;
       }

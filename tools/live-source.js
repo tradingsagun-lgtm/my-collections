@@ -347,6 +347,21 @@ async function genreOptions() {
   return Object.fromEntries(TYPES.map(t => [t, (genresFor(t) || {}).options || []]));
 }
 
+// ---- how a row is laid out as files ----
+// The genres offered in Discover's third dropdown on our rows. A fixed list, on
+// purpose: Stremio keeps its own copy of the addon's description until the addon
+// is reinstalled, so a list that followed each row's contents would go stale.
+const ROW_GENRES = ['Action', 'Adventure', 'Animation', 'Biography', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy',
+  'History', 'Horror', 'Music', 'Mystery', 'Romance', 'Sci-Fi', 'Sport', 'Thriller', 'War', 'Western'];
+// The files Stremio may ask for about one row, relative to catalog/<type>/:
+// "<id>.json" with every title, and with the genre filter one "<id>/genre=<Genre>.json"
+// per genre (the address Stremio builds when a genre is picked).
+function rowFiles(id, metas, withGenres) {
+  const files = { [`${id}.json`]: metas };
+  if (withGenres) for (const g of ROW_GENRES) files[`${id}/genre=${g}.json`] = metas.filter(m => (m.genres || []).includes(g));
+  return files;
+}
+
 // ---- rating and year in the title line ----
 // Stremio shows a title's name under its poster, so the rating and year are put
 // in front of it there: "★ 7.6 · 2016 · Train to Busan". Rating first, because
@@ -374,4 +389,4 @@ const isRatedPoster = url => /\/posters\/tt\d+-[\w-]+\.jpg$/.test(url || '');
 // The ordinary poster for a title, by IMDb id.
 const plainPoster = id => `https://images.metahub.space/poster/medium/${id}/img`;
 
-module.exports = { titleLine, plainName, ratedPosterFile, isRatedPoster, plainPoster, SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
+module.exports = { ROW_GENRES, rowFiles, titleLine, plainName, ratedPosterFile, isRatedPoster, plainPoster, SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
