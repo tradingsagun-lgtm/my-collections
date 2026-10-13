@@ -19,7 +19,7 @@ const LISTS = {
   year: 'New this year',
   imdbRating: 'Top rated'
 };
-const LIMITS = [25, 50, 100];
+const LIMITS = [25, 50, 100, 200];
 const SOURCES = { index: 'Our own index (every title)', wikipedia: 'Latest releases by language', cinemeta: "Stremio's own lists", mdblist: 'A public MDBList list' };
 
 // Rules that narrow a source into a list of our own, e.g. "popular series from
@@ -27,13 +27,14 @@ const SOURCES = { index: 'Our own index (every title)', wikipedia: 'Latest relea
 const FILTERS = {
   sinceYears: [0, 1, 2, 3, 5, 10, 15, 20, 30],   // 0 = any year; 2 = this year and last year
   minRating: [0, 6, 6.5, 7, 7.5, 8],        // IMDb rating; unrated titles are dropped when above 0
-  maxRating: [0, 5, 6, 6.5, 7, 7.5, 8],     // 0 = no upper limit
+  maxRating: [0, 5, 6, 6.5, 7, 7.5, 8, 8.5, 9],   // 0 = no upper limit. 9 is useful with few votes: scores above it are rarely genuine
   runtimeMin: [0, 60, 90, 120],             // minutes; titles with no known runtime are dropped when set
   runtimeMax: [0, 90, 120, 150, 180],       // 0 = no upper limit
   countries: Object.keys(titleIndex.COUNTRIES),
   sort: { source: 'In list order', rating: 'Best rated first', newest: 'Newest first', title: 'Title A–Z' },
   // Only for the index source:
   minVotes: [100, 1000, 5000, 10000, 25000, 100000],   // how well known a title must be
+  maxVotes: [0, 5000, 10000, 25000, 100000],            // 0 = no ceiling; a ceiling finds the well rated titles few have seen
   languages: Object.keys(titleIndex.LANGUAGES),
   platforms: Object.keys(titleIndex.PLATFORMS),       // made for or distributed by; not current availability
   indexGenres: titleIndex.GENRES,
@@ -100,7 +101,10 @@ function normalise(def) {
       source: 'index', type: def.type, limit, ...rulesOf(def),
       minVotes: pick(Number(def.minVotes), FILTERS.minVotes, 1000),
       language: pick(def.language, FILTERS.languages, ''),   // original language
+      maxVotes: pick(Number(def.maxVotes), FILTERS.maxVotes, 0),
       platform: pick(def.platform, FILTERS.platforms, ''),   // made for or distributed by this platform
+      // ...or by any of these. With both given, a title on any of them counts.
+      platforms: [...new Set(Array.isArray(def.platforms) ? def.platforms : [])].filter(p => FILTERS.platforms.includes(p) && p !== def.platform),
       sort: pick(def.sort, Object.keys(FILTERS.indexSort), 'votes')
     };
   }
@@ -133,7 +137,7 @@ function ruleWords(d) {
     d.minRating && d.maxRating ? `rated ${d.minRating}–${d.maxRating}` : d.minRating ? `rated ${d.minRating}+` : d.maxRating ? `rated up to ${d.maxRating}` : '',
     d.includeGenres.length ? (d.source === 'index' ? '' : 'also ') + d.includeGenres.join(' + ').toLowerCase() : '',
     d.excludeGenres.length ? 'no ' + d.excludeGenres.join(', ').toLowerCase() : '',
-    d.platform ? `${d.platform} originals and exclusives` : '',
+    d.platform || (d.platforms || []).length ? `${[d.platform, ...(d.platforms || [])].filter(Boolean).join(', ')} originals and exclusives` : '',
     d.language ? `${d.language}-language` : '',
     d.country ? d.country + (d.source === 'index' ? '' : d.countryOnly ? ' only' : ' incl. co-productions') : '',
     d.excludeCountries.length ? 'not ' + d.excludeCountries.join(', ') : '',
@@ -149,7 +153,10 @@ function describe(def) {
   if (d.source === 'mdblist') return `MDBList ${d.user}/${d.slug} (${kind})`;
   if (d.source === 'wikipedia') return [`Latest ${d.language} movies, newest release first`, d.minRating ? `rated ${d.minRating}+` : '',
     d.minVotes > 100 ? `${d.minVotes.toLocaleString('en')}+ votes` : '', d.excludeMyRows ? 'not already in my rows' : ''].filter(Boolean).join(', ');
-  if (d.source === 'index') return [`Our index: ${kind}`, ...ruleWords(d), `${d.minVotes.toLocaleString('en')}+ votes`, FILTERS.indexSort[d.sort].toLowerCase()].join(', ');
+  if (d.source === 'index') {
+    const votes = d.maxVotes ? `${d.minVotes.toLocaleString('en')} to ${d.maxVotes.toLocaleString('en')} votes` : `${d.minVotes.toLocaleString('en')}+ votes`;
+    return [`Our index: ${kind}`, ...ruleWords(d), votes, FILTERS.indexSort[d.sort].toLowerCase()].join(', ');
+  }
   const base = [LISTS[d.list].replace(' this year', ''), d.genre.toLowerCase(), kind, d.list === 'year' ? 'this year' : ''].filter(Boolean).join(' ');
   return [base, ...ruleWords(d), d.sort !== 'source' ? FILTERS.sort[d.sort].toLowerCase() : ''].filter(Boolean).join(', ');
 }
@@ -164,26 +171,36 @@ async function getJson(url) {
 const preview = (m, type) => ({
   id: m.id, type, name: m.name, poster: m.poster, posterShape: 'poster',
   releaseInfo: m.releaseInfo, imdbRating: m.imdbRating, genres: m.genres,
-  director: m.director, description: m.description
+  director: m.director, description: m.description,
+  released: m.released   // the release date, where Stremio's metadata has one: the index only knows the year
 });
 
-// Posters and descriptions for a list of ids, from Cinemeta, five at a time.
-// Titles already known from the previous refresh are reused, so a normal run
-// looks up only the newcomers. basic(i) supplies what to show if Cinemeta has nothing.
-async function enrich(ids, type, known, basic) {
+// Posters, descriptions and release dates for a list of ids, from Cinemeta,
+// eight at a time. A title is looked up once: first the row's own previous
+// titles are reused, then a store shared by every row (many titles sit in
+// several rows), and only then the network. basic(i) supplies what to show if
+// Cinemeta has nothing. needDate: also look up titles whose stored copy has no
+// release date, for rows ordered by it.
+async function enrich(ids, type, known, basic, needDate = false) {
+  const shared = titleIndex.readMetaStore();
+  const usable = m => m && m.poster && (!needDate || m.released);
   const metas = new Array(ids.length);
-  for (let i = 0; i < ids.length; i += 5) {
-    await Promise.all(ids.slice(i, i + 5).map(async (id, j) => {
-      if (known[id]) { metas[i + j] = known[id]; return; }
+  let fetched = 0;
+  for (let i = 0; i < ids.length; i += 8) {
+    await Promise.all(ids.slice(i, i + 8).map(async (id, j) => {
+      const have = usable(known[id]) ? known[id] : shared[`${type}:${id}`];
+      if (usable(have)) { metas[i + j] = have; return; }
       try {
         const { meta } = await getJson(`${CINEMETA}/meta/${type}/${id}.json`);
         if (!meta || !meta.name) throw new Error('no metadata');
-        metas[i + j] = preview({ ...meta, id }, type);
+        metas[i + j] = shared[`${type}:${id}`] = preview({ ...meta, id }, type);
+        fetched++;
       } catch (e) {
-        metas[i + j] = { id, type, posterShape: 'poster', poster: `https://images.metahub.space/poster/medium/${id}/img`, ...basic(i + j) };
+        metas[i + j] = known[id] || { id, type, posterShape: 'poster', poster: `https://images.metahub.space/poster/medium/${id}/img`, ...basic(i + j) };
       }
     }));
   }
+  if (fetched) titleIndex.writeMetaStore(shared);
   return metas;
 }
 
@@ -205,11 +222,17 @@ async function fetchIndexList(d, known, exclude) {
       for (let y = to; y >= from; y--) for (const film of await titleIndex.wikipediaFilms(d.language, y)) inLanguage.add(film.id);
     }
   }
-  const onPlatform = d.platform ? await titleIndex.wikidataSet('platform', d.platform) : null;
+  // One platform or several: a title counts if it belongs to any of them.
+  const wanted = [d.platform, ...d.platforms].filter(Boolean);
+  let onPlatform = null;
+  if (wanted.length) {
+    onPlatform = new Set();
+    for (const p of wanted) for (const id of await titleIndex.wikidataSet('platform', p)) onPlatform.add(id);
+  }
   const notCountries = await Promise.all(d.excludeCountries.map(c => titleIndex.wikidataSet('country', c)));
   const firstYear = new Date().getFullYear() - d.sinceYears + 1;
   const picked = titleIndex.loadIndex().filter(t =>
-    t.type === d.type && t.votes >= d.minVotes &&
+    t.type === d.type && t.votes >= d.minVotes && (!d.maxVotes || t.votes < d.maxVotes) &&
     (!d.sinceYears || t.year >= firstYear) && (!d.yearFrom || t.year >= d.yearFrom) && (!d.yearTo || t.year <= d.yearTo) &&
     (!d.minRating || t.rating >= d.minRating) && (!d.maxRating || t.rating <= d.maxRating) &&
     d.includeGenres.every(g => t.genres.includes(g)) && !d.excludeGenres.some(g => t.genres.includes(g)) &&
@@ -223,12 +246,22 @@ async function fetchIndexList(d, known, exclude) {
     title: (a, b) => a.name.localeCompare(b.name)
   }[d.sort];
   const top = picked.sort(order).slice(0, d.limit);
+  const byDate = d.sort === 'newest';
   const metas = await enrich(top.map(t => t.id), d.type, known, i => ({
     name: top[i].name, genres: top[i].genres,
     releaseInfo: d.type !== 'series' || top[i].endYear === top[i].year ? String(top[i].year) : `${top[i].year}–${top[i].endYear || ''}`
-  }));
+  }), byDate);
   // The index is refreshed daily, so its title and rating are the current ones.
-  return metas.map((m, i) => ({ ...m, name: top[i].name, imdbRating: String(top[i].rating) }));
+  const out = metas.map((m, i) => ({ ...m, name: top[i].name, imdbRating: String(top[i].rating), year: top[i].year, votes: top[i].votes }));
+  // "Newest first": the index knows only the year, so the titles chosen are put in order of their
+  // actual release date where Stremio's metadata has one (a title without one goes to the start of its year).
+  if (byDate) {
+    const date = m => (m.released ? String(m.released).slice(0, 10) : `${m.year}-00-00`);
+    out.sort((a, b) => date(b).localeCompare(date(a)) || b.votes - a.votes);
+  }
+  const result = out.map(({ year, votes, ...m }) => m);
+  result.matched = picked.length;   // how many titles met the rules, before the row was cut to its size
+  return result;
 }
 
 // ---- source: latest releases in one language ----
@@ -337,6 +370,7 @@ async function fetchList(def, previous = [], excludeIds = []) {
     : d.source === 'wikipedia' ? await fetchLatestReleases(d, known, exclude)
     : await fetchCinemetaList(d, exclude);
   if (!metas.length) throw new Error('source returned no titles');
+  // metas.matched, when the source can tell: how many titles met the rules in all.
   return metas;
 }
 

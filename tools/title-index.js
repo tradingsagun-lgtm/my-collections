@@ -240,7 +240,19 @@ async function wikipediaFilms(language, year, dir = defaultDir()) {
   }
 }
 
-module.exports = { MIN_VOTES, COUNTRIES, LANGUAGES, PLATFORMS, GENRES, WIKIPEDIA_LANGUAGES, defaultDir, ensureIndex, loadIndex, wikidataSet, wikipediaFilms, summaryOf };
+// ---- what Stremio's metadata said about a title, kept so it is asked once ----
+// Posters, descriptions and release dates, keyed "<type>:<imdb id>". Many titles
+// sit in several rows; without this every row would look each one up again.
+const metaStoreFile = (dir = defaultDir()) => path.join(dir, 'title-details.json');
+function readMetaStore(dir = defaultDir()) {
+  try { return JSON.parse(fs.readFileSync(metaStoreFile(dir), 'utf8')); } catch (e) { return {}; }
+}
+function writeMetaStore(store, dir = defaultDir()) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(metaStoreFile(dir), JSON.stringify(store));
+}
+
+module.exports = { readMetaStore, writeMetaStore, MIN_VOTES, COUNTRIES, LANGUAGES, PLATFORMS, GENRES, WIKIPEDIA_LANGUAGES, defaultDir, ensureIndex, loadIndex, wikidataSet, wikipediaFilms, summaryOf };
 
 // Run as "node title-index.js build <dir>" by ensureIndex().
 if (require.main === module && process.argv[2] === 'build') {
