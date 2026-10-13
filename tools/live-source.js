@@ -14,6 +14,19 @@ const LISTS = {
   imdbRating: 'Top rated'
 };
 const LIMITS = [25, 50, 100];
+
+// Rules that narrow one of Stremio's lists into a list of our own, e.g.
+// "popular series from the last two years" or "top rated South Korean movies".
+const FILTERS = {
+  sinceYears: [0, 1, 2, 3, 5, 10],          // 0 = any year; 2 = this year and last year
+  minRating: [0, 6, 6.5, 7, 7.5, 8],        // IMDb rating; unrated titles are dropped when above 0
+  countries: ['South Korea', 'Japan', 'India', 'China', 'Hong Kong', 'Thailand', 'United Kingdom', 'United States',
+    'France', 'Spain', 'Germany', 'Italy', 'Denmark', 'Sweden', 'Norway', 'Turkey', 'Mexico', 'Brazil', 'Australia', 'Canada'],
+  sort: { source: 'In list order', rating: 'Best rated first' }
+};
+// How far down a list to look for titles that pass the rules: 20 pages is about
+// 1,000 titles. Movie pages are slow (about 2 seconds each), so this is also a time limit.
+const MAX_SCAN_PAGES = 20;
 const SOURCES = { cinemeta: "Stremio's own lists", mdblist: 'A public MDBList list' };
 
 // Accepts "https://mdblist.com/lists/<user>/<list>" (with or without /json) or "<user>/<list>".
@@ -35,8 +48,18 @@ function normalise(def) {
   if (!LISTS[def.list]) throw new Error('unknown live list');
   // "New this year" is filtered by year, so it cannot also take a genre.
   const genre = def.list === 'year' ? '' : String(def.genre || '').replace(/[^\w &-]/g, '').slice(0, 30);
-  return { source: 'cinemeta', list: def.list, type: def.type, genre, limit };
+  const pick = (value, allowed, fallback) => allowed.includes(value) ? value : fallback;
+  const country = pick(def.country, FILTERS.countries, '');
+  return {
+    source: 'cinemeta', list: def.list, type: def.type, genre, limit,
+    sinceYears: pick(Number(def.sinceYears), FILTERS.sinceYears, 0),
+    minRating: pick(Number(def.minRating), FILTERS.minRating, 0),
+    country,
+    countryOnly: Boolean(country && def.countryOnly),   // true = made in that country alone, no co-productions
+    sort: pick(def.sort, Object.keys(FILTERS.sort), 'source')
+  };
 }
+const hasRules = d => Boolean(d.sinceYears || d.minRating || d.country || d.sort === 'rating');
 const signature = def => JSON.stringify(normalise(def));
 
 // "Popular thriller movies", "New series this year", "MDBList someone/some-list (series)"
@@ -44,7 +67,14 @@ function describe(def) {
   const d = normalise(def);
   const kind = d.type === 'movie' ? 'movies' : 'series';
   if (d.source === 'mdblist') return `MDBList ${d.user}/${d.slug} (${kind})`;
-  return [LISTS[d.list].replace(' this year', ''), d.genre.toLowerCase(), kind, d.list === 'year' ? 'this year' : ''].filter(Boolean).join(' ');
+  const base = [LISTS[d.list].replace(' this year', ''), d.genre.toLowerCase(), kind, d.list === 'year' ? 'this year' : ''].filter(Boolean).join(' ');
+  const rules = [
+    d.sinceYears === 1 ? 'this year only' : d.sinceYears ? `last ${d.sinceYears} years` : '',
+    d.minRating ? `rated ${d.minRating}+` : '',
+    d.country ? d.country + (d.countryOnly ? ' only' : ' incl. co-productions') : '',
+    d.sort === 'rating' ? 'best rated first' : ''
+  ].filter(Boolean);
+  return [base, ...rules].join(', ');
 }
 
 async function getJson(url) {
@@ -62,20 +92,35 @@ const preview = (m, type) => ({
 
 async function fetchCinemetaList(d) {
   const filter = d.list === 'year' ? `genre=${new Date().getFullYear()}` : d.genre ? `genre=${encodeURIComponent(d.genre)}` : '';
+  // The rules of this row. A series counts by the year it started.
+  const firstYear = new Date().getFullYear() - d.sinceYears + 1;
+  const passes = m => {
+    if (d.sinceYears && !((parseInt(m.releaseInfo, 10) || Number(m.year) || 0) >= firstYear)) return false;
+    if (d.minRating && !(parseFloat(m.imdbRating) >= d.minRating)) return false;
+    if (d.country) {
+      const made = String(m.country || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (!made.includes(d.country) || (d.countryOnly && made.length !== 1)) return false;
+    }
+    return true;
+  };
+  const byRating = d.sort === 'rating';
+  const maxPages = hasRules(d) ? MAX_SCAN_PAGES : Math.ceil(d.limit / 50) + 2;
   const metas = [];
   const seen = new Set();
-  for (let skip = 0; metas.length < d.limit && skip < d.limit + 100; skip += 50) {
-    const extra = [filter, skip ? `skip=${skip}` : ''].filter(Boolean).join('&');
-    const page = (await getJson(`${CINEMETA}/catalog/${d.type}/${d.list}${extra ? '/' + extra : ''}.json`)).metas || [];
-    if (!page.length) break;
-    for (const m of page) {
-      if (!/^tt\d+$/.test(m.id || '') || !m.name || !m.poster || seen.has(m.id)) continue;
+  // Sorting by rating needs the whole pool first; otherwise stop as soon as the row is full.
+  for (let page = 0; page < maxPages && (byRating || metas.length < d.limit); page++) {
+    const extra = [filter, page ? `skip=${page * 50}` : ''].filter(Boolean).join('&');
+    const items = (await getJson(`${CINEMETA}/catalog/${d.type}/${d.list}${extra ? '/' + extra : ''}.json`)).metas || [];
+    if (!items.length) break;
+    for (const m of items) {
+      if (!/^tt\d+$/.test(m.id || '') || !m.name || !m.poster || seen.has(m.id) || !passes(m)) continue;
       seen.add(m.id);
       metas.push(preview(m, d.type));
-      if (metas.length >= d.limit) break;
+      if (!byRating && metas.length >= d.limit) break;
     }
   }
-  return metas;
+  if (byRating) metas.sort((a, b) => (parseFloat(b.imdbRating) || 0) - (parseFloat(a.imdbRating) || 0));
+  return metas.slice(0, d.limit);
 }
 
 // MDBList's export gives ids, titles and years only, so each title's poster and
@@ -129,4 +174,4 @@ async function genreOptions() {
   return Object.fromEntries(TYPES.map(t => [t, (genresFor(t) || {}).options || []]));
 }
 
-module.exports = { SOURCES, LISTS, LIMITS, normalise, signature, describe, fetchList, genreOptions };
+module.exports = { SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
