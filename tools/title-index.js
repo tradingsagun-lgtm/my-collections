@@ -162,13 +162,15 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 // One request at a time with a pause before each, and a wait-and-retry when asked to slow down.
 async function politeJson(url, options = {}) {
   for (let attempt = 1; ; attempt++) {
-    await pause(500);
+    await pause(1000);
     const res = await fetch(url, { ...options, headers: { ...WIKI_AGENT, ...(options.headers || {}) } });
     const text = await res.text();
     try { return JSON.parse(text); }
     catch (e) {
-      if (attempt >= 4) throw new Error(`${new URL(url).host} would not answer (${res.status})`);
-      await pause(5000 * attempt);
+      if (attempt >= 6) throw new Error(`${new URL(url).host} would not answer (${res.status})`);
+      // Told to slow down: wait as long as asked (up to two minutes), otherwise a little longer each time.
+      const asked = Number(res.headers.get('retry-after'));
+      await pause(asked > 0 ? Math.min(asked, 120) * 1000 : 15000 * attempt);
     }
   }
 }
@@ -210,7 +212,10 @@ async function wikipediaFilms(language, year, dir = defaultDir()) {
   if (!WIKIPEDIA_LANGUAGES.includes(language)) throw new Error(`no Wikipedia film list for: ${language}`);
   const file = path.join(dir, `wikipedia-films-${language}-${year}.json`);
   const cached = (() => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return null; } })();
-  if (cached && Date.now() - Date.parse(cached.fetchedAt) < LIST_MAX_AGE_MS) return cached.films;
+  // This year's list changes daily; last year's occasionally; older ones hardly at all.
+  const age = new Date().getFullYear() - year;
+  const maxAge = LIST_MAX_AGE_MS * (age <= 0 ? 1 : age === 1 ? 7 : 30);
+  if (cached && Date.now() - Date.parse(cached.fetchedAt) < maxAge) return cached.films;
   try {
     const films = await crawlFilmList(language, year);
     fs.mkdirSync(dir, { recursive: true });

@@ -33,7 +33,7 @@ const FILTERS = {
   countries: Object.keys(titleIndex.COUNTRIES),
   sort: { source: 'In list order', rating: 'Best rated first', newest: 'Newest first', title: 'Title A–Z' },
   // Only for the index source:
-  minVotes: [100, 1000, 5000, 25000, 100000],   // how well known a title must be
+  minVotes: [100, 1000, 5000, 10000, 25000, 100000],   // how well known a title must be
   languages: Object.keys(titleIndex.LANGUAGES),
   indexGenres: titleIndex.GENRES,
   indexSort: { votes: 'Most voted first', rating: 'Best rated first', newest: 'Newest first', title: 'Title A–Z' },
@@ -188,7 +188,20 @@ async function enrich(ids, type, known, basic) {
 async function fetchIndexList(d, known, exclude) {
   await titleIndex.ensureIndex();
   const inCountry = d.country ? await titleIndex.wikidataSet('country', d.country) : null;
-  const inLanguage = d.language ? await titleIndex.wikidataSet('language', d.language) : null;
+  let inLanguage = d.language ? await titleIndex.wikidataSet('language', d.language) : null;
+  // Wikidata is slow to record the language of recent regional films; Wikipedia's
+  // yearly lists know them. Where the row covers ten years or fewer, add those lists.
+  if (inLanguage && titleIndex.WIKIPEDIA_LANGUAGES.includes(d.language) && d.type === 'movie') {
+    const thisYear = new Date().getFullYear();
+    const from = Math.max(d.yearFrom || 0, d.sinceYears ? thisYear - d.sinceYears + 1 : 0);
+    const to = Math.min(d.yearTo || thisYear, thisYear);
+    if (from && to - from < 10) {
+      inLanguage = new Set(inLanguage);
+      // If a list cannot be had at all, this throws and the row keeps its last good titles. Carrying
+      // on with Wikidata alone would quietly publish a thinner list, and the PC and GitHub could disagree.
+      for (let y = to; y >= from; y--) for (const film of await titleIndex.wikipediaFilms(d.language, y)) inLanguage.add(film.id);
+    }
+  }
   const notCountries = await Promise.all(d.excludeCountries.map(c => titleIndex.wikidataSet('country', c)));
   const firstYear = new Date().getFullYear() - d.sinceYears + 1;
   const picked = titleIndex.loadIndex().filter(t =>
