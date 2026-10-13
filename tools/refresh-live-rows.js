@@ -47,7 +47,9 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
       // Under a Discover entry of our own, a row holds every type; otherwise only the row's own type lives in this file.
       const pinned = (row.pinned || []).filter(m => settings.catalogType || m.type === row.live.type);
       const pinIds = new Set(pinned.map(m => m.id));
-      const metas = [...pinned, ...(await fetchList(row.live, before, handPicked)).filter(m => !pinIds.has(m.id))].map(named);
+      const found = await fetchList(row.live, before, handPicked);
+      const matched = typeof found.matched === 'number' ? found.matched : null;   // how many titles met the rules, where the source can tell
+      const metas = [...pinned, ...found.filter(m => !pinIds.has(m.id))].map(named);
       const same = shown(before) === shown(metas);   // the same titles, in the same order, with the same labels
       if (!same || !status[row.id] || status[row.id].sig !== sig || status[row.id].error) {
         // The row and, with the genre filter on, one file per genre: the same layout the PC writes.
@@ -55,9 +57,9 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
           fs.mkdirSync(path.dirname(path.join(folder, name)), { recursive: true });
           fs.writeFileSync(path.join(folder, name), JSON.stringify({ metas: list }));
         }
-        status[row.id] = { sig, updatedAt: new Date().toISOString(), error: null };
+        status[row.id] = { sig, updatedAt: new Date().toISOString(), error: null, matched };
         changed++;
-      }
+      } else status[row.id].matched = matched;   // the titles shown are the same, but the count behind them may have moved
       console.log(`${row.name}: ${metas.length} titles, ${same ? 'unchanged' : 'updated'}`);
     } catch (e) {
       // Keep the last good list online; just record why this run failed.

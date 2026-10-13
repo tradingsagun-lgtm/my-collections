@@ -101,6 +101,8 @@ function normalise(def) {
       source: 'index', type: def.type, limit, ...rulesOf(def),
       minVotes: pick(Number(def.minVotes), FILTERS.minVotes, 1000),
       language: pick(def.language, FILTERS.languages, ''),   // original language
+      // ...or any of these. With both given, a title in any of them counts.
+      languages: [...new Set(Array.isArray(def.languages) ? def.languages : [])].filter(l => FILTERS.languages.includes(l) && l !== def.language),
       maxVotes: pick(Number(def.maxVotes), FILTERS.maxVotes, 0),
       platform: pick(def.platform, FILTERS.platforms, ''),   // made for or distributed by this platform
       // ...or by any of these. With both given, a title on any of them counts.
@@ -138,7 +140,8 @@ function ruleWords(d) {
     d.includeGenres.length ? (d.source === 'index' ? '' : 'also ') + d.includeGenres.join(' + ').toLowerCase() : '',
     d.excludeGenres.length ? 'no ' + d.excludeGenres.join(', ').toLowerCase() : '',
     d.platform || (d.platforms || []).length ? `${[d.platform, ...(d.platforms || [])].filter(Boolean).join(', ')} originals and exclusives` : '',
-    d.language ? `${d.language}-language` : '',
+    (d.languages || []).length > 3 ? `in any of ${d.languages.length + (d.language ? 1 : 0)} languages`
+      : d.language || (d.languages || []).length ? `${[d.language, ...(d.languages || [])].filter(Boolean).join(' or ')}-language` : '',
     d.country ? d.country + (d.source === 'index' ? '' : d.countryOnly ? ' only' : ' incl. co-productions') : '',
     d.excludeCountries.length ? 'not ' + d.excludeCountries.join(', ') : '',
     d.runtimeMin && d.runtimeMax ? `${d.runtimeMin}–${d.runtimeMax} min` : d.runtimeMin ? `${d.runtimeMin}+ min` : d.runtimeMax ? `up to ${d.runtimeMax} min` : '',
@@ -221,6 +224,11 @@ async function fetchIndexList(d, known, exclude) {
       // on with Wikidata alone would quietly publish a thinner list, and the PC and GitHub could disagree.
       for (let y = to; y >= from; y--) for (const film of await titleIndex.wikipediaFilms(d.language, y)) inLanguage.add(film.id);
     }
+  }
+  // Several languages: a title counts if it is in any of them.
+  if (d.languages.length) {
+    inLanguage = new Set(inLanguage || []);
+    for (const l of d.languages) for (const id of await titleIndex.wikidataSet('language', l)) inLanguage.add(id);
   }
   // One platform or several: a title counts if it belongs to any of them.
   const wanted = [d.platform, ...d.platforms].filter(Boolean);
