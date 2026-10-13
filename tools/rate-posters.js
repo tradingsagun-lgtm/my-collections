@@ -71,7 +71,7 @@ async function makePoster(meta, outFile, tmpDir) {
 
   const used = new Set();
   const failed = new Set();
-  let made = 0, pointed = 0, rewritten = 0;
+  let made = 0, pointed = 0, rewritten = 0, firstError = null;
   for (const file of files) {
     const doc = readJson(file, null);
     if (!doc || !Array.isArray(doc.metas)) continue;
@@ -83,7 +83,12 @@ async function makePoster(meta, outFile, tmpDir) {
         const out = path.join(root, name);
         if (!fs.existsSync(out) && !failed.has(name)) {
           try { fs.mkdirSync(postersDir, { recursive: true }); await makePoster(meta, out, tmpDir); made++; }
-          catch (e) { failed.add(name); fs.rmSync(out, { force: true }); if (failed.size <= 5) console.log(`could not make a poster for ${meta.name}: ${String(e.message).split('\n')[0]}`); }
+          catch (e) {
+            failed.add(name); fs.rmSync(out, { force: true });
+            const why = String((e.stderr && e.stderr.toString()) || e.message).trim().split('\n')[0].slice(0, 300);
+            firstError = firstError || `${meta.name}: ${why}`;
+            if (failed.size <= 5) console.log(`could not make a poster for ${meta.name}: ${why}`);
+          }
         }
         if (fs.existsSync(out)) { poster = `${site}/${name}`; used.add(path.basename(name)); pointed++; }
       }
@@ -100,5 +105,7 @@ async function makePoster(meta, outFile, tmpDir) {
     if (!used.has(f)) { fs.rmSync(path.join(postersDir, f)); removed++; }
   }
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  // The job's log cannot be read without signing in to GitHub, so the outcome also goes into a small public file.
+  fs.writeFileSync(path.join(root, 'posters-status.json'), JSON.stringify({ on: wanted, using: pointed, made, removed, failed: failed.size, firstError }));
   console.log(`rating posters ${wanted ? 'on' : 'off'}: ${pointed} titles use one, ${made} made, ${removed} removed, ${failed.size} could not be made, ${rewritten} row files updated`);
 })().catch(e => { console.error('rating posters failed:', e.message); process.exit(1); });
