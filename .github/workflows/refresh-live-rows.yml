@@ -26,14 +26,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      # Rows built on our own index need it; it is rebuilt at most once a day
-      # (IMDb's files change daily) and kept between runs in the job's cache.
-      - id: day
-        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      # Rows built on our own index need it, and the lists it reads from Wikidata
+      # and Wikipedia. Each run starts from the previous run's copy and saves its
+      # own, so nothing is fetched again before it is due (the code decides that:
+      # the index daily, the lists from daily to monthly).
       - uses: actions/cache@v4
         with:
           path: .index-cache
-          key: title-index-${{ steps.day.outputs.day }}
+          key: title-index-${{ github.run_id }}
           restore-keys: title-index-
       - name: Fetch the lists
         run: node tools/refresh-live-rows.js
