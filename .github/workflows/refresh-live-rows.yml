@@ -1,0 +1,41 @@
+# Keeps live rows current while the PC is off. Published as
+# .github/workflows/refresh-live-rows.yml; edit the copy in the project
+# (src/hosted/), not the one in the repository.
+name: Refresh live rows
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'   # every 6 hours, at 17 minutes past
+  workflow_dispatch:          # "Run workflow" button on the Actions tab
+  push:
+    paths:                    # also when the PC changes which rows are live, or this job itself
+      - 'live-rows.json'
+      - 'tools/**'
+      - '.github/workflows/refresh-live-rows.yml'
+
+permissions:
+  contents: write             # to commit the refreshed rows; nothing else
+
+concurrency:
+  group: refresh-live-rows
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the lists
+        run: node tools/refresh-live-rows.js
+      - name: Commit what changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A catalog live-status.json
+          if git diff --cached --quiet; then
+            echo "Nothing changed."
+          else
+            git commit -m "Refresh live rows"
+            git push || (git pull --rebase && git push)
+          fi
