@@ -39,7 +39,8 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
 
   for (const row of rows) {
     const sig = signature(row.live);
-    const folder = path.join(root, 'catalog', folderOf(row));
+    // row.dir: rows of the second addon ("My Collections: Explore") are published under explore/.
+    const folder = path.join(root, row.dir || '', 'catalog', folderOf(row));
     const file = path.join(folder, `${row.id}.json`);
     const before = readJson(file, { metas: [] }).metas || [];
     try {
