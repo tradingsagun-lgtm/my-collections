@@ -395,11 +395,14 @@ async function genreOptions() {
 // is reinstalled, so a list that followed each row's contents would go stale.
 const ROW_GENRES = ['Action', 'Adventure', 'Animation', 'Biography', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy',
   'History', 'Horror', 'Music', 'Mystery', 'Romance', 'Sci-Fi', 'Sport', 'Thriller', 'War', 'Western'];
+// The first choice in the filter of a "Discover only" row: every title. Stremio leaves a row off
+// the Board when its filter must be chosen, and in Discover opens it on the first choice.
+const ALL_GENRES = 'All';
 // The files Stremio may ask for about one row, relative to catalog/<type>/:
-// "<id>.json" with every title, and with the genre filter one "<id>/genre=<Genre>.json"
-// per genre (the address Stremio builds when a genre is picked).
+// "<id>.json" with every title, "<id>/genre=All.json" (the same, for a "Discover only" row),
+// and with the genre filter one "<id>/genre=<Genre>.json" per genre (the address Stremio builds when a genre is picked).
 function rowFiles(id, metas, withGenres) {
-  const files = { [`${id}.json`]: metas };
+  const files = { [`${id}.json`]: metas, [`${id}/genre=${ALL_GENRES}.json`]: metas };
   if (withGenres) for (const g of ROW_GENRES) files[`${id}/genre=${g}.json`] = metas.filter(m => (m.genres || []).includes(g));
   return files;
 }
@@ -431,4 +434,4 @@ const isRatedPoster = url => /\/posters\/tt\d+-[\w-]+\.jpg$/.test(url || '');
 // The ordinary poster for a title, by IMDb id.
 const plainPoster = id => `https://images.metahub.space/poster/medium/${id}/img`;
 
-module.exports = { ROW_GENRES, rowFiles, titleLine, plainName, ratedPosterFile, isRatedPoster, plainPoster, SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
+module.exports = { ROW_GENRES, ALL_GENRES, rowFiles, titleLine, plainName, ratedPosterFile, isRatedPoster, plainPoster, SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
