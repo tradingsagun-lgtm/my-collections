@@ -24,12 +24,14 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
 
   // For the "not already in my rows" rule: every title in a row that is not live.
   // Rows are published under their type (movie, series) or, with a Discover entry of our own, under its name.
-  const folderOf = row => settings.catalogType || row.live.type;
+  // row.folder: the row's own Discover entry ("Collections · Movie Picks"); older lists gave one name for all.
+  const folderOf = row => row.folder || settings.catalogType || row.live.type;
   const liveFiles = new Set(rows.map(r => path.join('catalog', folderOf(r), `${r.id}.json`)));
   const handPicked = [];
-  // With a Discover entry of our own, only its folder counts: the movie and series folders then
+  // With Discover entries of our own, every folder but movie and series counts: those two then
   // hold copies kept for devices that have not reinstalled the addon yet.
-  const folders = settings.catalogType ? [settings.catalogType] : fs.existsSync(path.join(root, 'catalog')) ? fs.readdirSync(path.join(root, 'catalog')) : [];
+  const allFolders = fs.existsSync(path.join(root, 'catalog')) ? fs.readdirSync(path.join(root, 'catalog')) : [];
+  const folders = settings.catalogType ? allFolders.filter(t => !['movie', 'series'].includes(t)) : allFolders;
   for (const type of folders.filter(t => fs.existsSync(path.join(root, 'catalog', t)))) {
     for (const f of fs.readdirSync(path.join(root, 'catalog', type))) {
       if (liveFiles.has(path.join('catalog', type, f))) continue;
