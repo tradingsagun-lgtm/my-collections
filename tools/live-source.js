@@ -434,4 +434,4 @@ const isRatedPoster = url => /\/posters\/tt\d+-[\w-]+\.jpg$/.test(url || '');
 // The ordinary poster for a title, by IMDb id.
 const plainPoster = id => `https://images.metahub.space/poster/medium/${id}/img`;
 
-module.exports = { ROW_GENRES, ALL_GENRES, rowFiles, titleLine, plainName, ratedPosterFile, isRatedPoster, plainPoster, SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
+module.exports = { enrich, ROW_GENRES, ALL_GENRES, rowFiles, titleLine, plainName, ratedPosterFile, isRatedPoster, plainPoster, SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
