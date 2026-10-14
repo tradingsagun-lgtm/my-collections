@@ -211,8 +211,9 @@ async function enrich(ids, type, known, basic, needDate = false) {
 }
 
 // ---- source: our own index ----
-async function fetchIndexList(d, known, exclude) {
-  await titleIndex.ensureIndex();
+// The rules of an index row as a test of one title from the index: true if the title belongs in the row
+// (before the row is cut to its size). Used to fill the row, and on the PC to find a title's best row.
+async function indexFilter(d, exclude = new Set()) {
   const inCountry = d.country ? await titleIndex.wikidataSet('country', d.country) : null;
   let inLanguage = d.language ? await titleIndex.wikidataSet('language', d.language) : null;
   // Wikidata is slow to record the language of recent regional films; Wikipedia's
@@ -242,7 +243,7 @@ async function fetchIndexList(d, known, exclude) {
   }
   const notCountries = await Promise.all(d.excludeCountries.map(c => titleIndex.wikidataSet('country', c)));
   const firstYear = new Date().getFullYear() - d.sinceYears + 1;
-  const picked = titleIndex.loadIndex().filter(t =>
+  return t =>
     t.type === d.type && t.votes >= d.minVotes && (!d.maxVotes || t.votes < d.maxVotes) &&
     (!d.sinceYears || t.year >= firstYear) && (!d.yearFrom || t.year >= d.yearFrom) && (!d.yearTo || t.year <= d.yearTo) &&
     (!d.minRating || t.rating >= d.minRating) && (!d.maxRating || t.rating <= d.maxRating) &&
@@ -250,7 +251,11 @@ async function fetchIndexList(d, known, exclude) {
     (!d.anyGenres.length || d.anyGenres.some(g => t.genres.includes(g))) &&
     (!d.runtimeMin || t.runtime >= d.runtimeMin) && (!d.runtimeMax || (t.runtime && t.runtime <= d.runtimeMax)) &&
     (!inCountry || inCountry.has(t.id)) && (!inLanguage || inLanguage.has(t.id)) && (!onPlatform || onPlatform.has(t.id)) && !notCountries.some(s => s.has(t.id)) &&
-    !(d.excludeMyRows && exclude.has(t.id)));
+    !(d.excludeMyRows && exclude.has(t.id));
+}
+async function fetchIndexList(d, known, exclude) {
+  await titleIndex.ensureIndex();
+  const picked = titleIndex.loadIndex().filter(await indexFilter(d, exclude));
   const order = {
     votes: (a, b) => b.votes - a.votes,
     rating: (a, b) => b.rating - a.rating || b.votes - a.votes,
@@ -444,4 +449,4 @@ const isRatedPoster = url => /\/posters\/tt\d+-[\w-]+\.jpg$/.test(url || '');
 // The ordinary poster for a title, by IMDb id.
 const plainPoster = id => `https://images.metahub.space/poster/medium/${id}/img`;
 
-module.exports = { enrich, ROW_GENRES, ALL_GENRES, rowFiles, titleLine, plainName, ratedPosterFile, isRatedPoster, plainPoster, SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions };
+module.exports = { enrich, ROW_GENRES, ALL_GENRES, rowFiles, titleLine, plainName, ratedPosterFile, isRatedPoster, plainPoster, SOURCES, LISTS, LIMITS, FILTERS, normalise, signature, describe, fetchList, genreOptions, indexFilter };
