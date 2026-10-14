@@ -296,7 +296,10 @@ async function fetchLatestReleases(d, known, exclude) {
   }
   const top = picked.sort((a, b) => b.released.localeCompare(a.released) || b.votes - a.votes).slice(0, d.limit);
   const metas = await enrich(top.map(t => t.id), 'movie', known, i => ({ name: top[i].name, genres: top[i].genres, releaseInfo: String(top[i].year) }));
-  return metas.map((m, i) => ({ ...m, name: top[i].name, releaseInfo: String(top[i].year), imdbRating: String(top[i].rating) }));
+  // released: Wikipedia's date where Stremio's metadata has none, so the manager can tell when the
+  // newest title in the row came out.
+  const dated = i => top[i].released.endsWith('-00') ? {} : { released: top[i].released };
+  return metas.map((m, i) => ({ ...dated(i), ...m, name: top[i].name, releaseInfo: String(top[i].year), imdbRating: String(top[i].rating) }));
 }
 
 // ---- source: Stremio's own lists ----
