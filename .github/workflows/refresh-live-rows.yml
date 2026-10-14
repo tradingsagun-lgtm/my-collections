@@ -8,9 +8,11 @@ on:
     - cron: '17 */6 * * *'   # every 6 hours, at 17 minutes past
   workflow_dispatch:          # "Run workflow" button on the Actions tab
   push:
-    paths:                    # also when the PC changes the rows, or this job itself
+    paths:                    # also when the PC changes which live rows exist or how, or this job itself
       - 'live-rows.json'
-      - 'catalog/**'
+      # Not 'catalog/**' (removed in v1.33.0): every publish from the PC rewrites the row files, and the PC
+      # publishes every half hour to leave out watched titles, so this ran the job after every publish,
+      # which put the watched titles back: a loop of two commits each half hour.
       - 'tools/**'
       - '.github/workflows/refresh-live-rows.yml'
 
