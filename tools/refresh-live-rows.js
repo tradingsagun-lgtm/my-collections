@@ -7,7 +7,7 @@
 // catalog/<type>/<row>.json and live-status.json only where something changed.
 const fs = require('fs');
 const path = require('path');
-const { fetchList, signature, titleLine, plainName, rowFiles } = require('./live-source');
+const { fetchList, signature, titleLine, plainName, rowFiles, normalise, indexFilter } = require('./live-source');
 
 const root = path.join(__dirname, '..');
 const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return fallback; } };
@@ -21,6 +21,7 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
   const statusFile = path.join(root, 'live-status.json');
   const status = readJson(statusFile, {});
   let changed = 0, failed = 0;
+  const shownIn = {};   // row id -> the titles it shows after this run
 
   // For the "not already in my rows" rule: every title in a row that is not live.
   // Rows are published under their type (movie, series) or, with a Discover entry of our own, under its name.
@@ -53,6 +54,7 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
       const found = await fetchList(row.live, before, handPicked);
       const matched = typeof found.matched === 'number' ? found.matched : null;   // how many titles met the rules, where the source can tell
       const metas = [...pinned, ...found.filter(m => !pinIds.has(m.id))].map(named);
+      shownIn[row.id] = new Set(metas.map(m => m.id));   // for re-evaluate below
       const same = shown(before) === shown(metas);   // the same titles, in the same order, with the same labels
       if (!same || !status[row.id] || status[row.id].sig !== sig || status[row.id].error) {
         // The row and, with the genre filter on, one file per genre: the same layout the PC writes.
@@ -69,6 +71,32 @@ const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(f
       failed++;
       status[row.id] = { ...(status[row.id] || { sig, updatedAt: null }), error: e.message };
       console.log(`${row.name}: FAILED (${e.message}); keeping the last good list`);
+    }
+  }
+
+  // Re-evaluate on schedule (every 2 weeks or month, set in the manager), so it works with the PC off:
+  // for each hand-picked or pinned title, the rule-based rows whose own rules it meets and that do not
+  // show it yet. Written to reevaluate-suggestions.json for the manager to offer; nothing is added here.
+  // The job cannot see the library, so the manager drops watched titles when it shows them.
+  const re = settings.reevaluate;
+  const EVERY = { '14d': 14, '30d': 30 };
+  if (re && EVERY[re.every]) {
+    const sugFile = path.join(root, 'reevaluate-suggestions.json');
+    const prev = readJson(sugFile, null);
+    const last = [prev && prev.at, re.lastRun].filter(Boolean).sort().pop();
+    if (!last || Date.now() - Date.parse(last) >= EVERY[re.every] * 864e5) {
+      const titleIndex = require('./title-index');
+      await titleIndex.ensureIndex();
+      const index = new Map(titleIndex.loadIndex().map(t => [t.id, t]));
+      const tests = [];
+      for (const row of rows) { const d = normalise(row.live); if (d.source === 'index') tests.push({ row, fits: await indexFilter(d) }); }
+      const items = (re.titles || []).map(t => {
+        const ti = index.get(t.id);
+        const fit = ti ? tests.filter(x => !(t.in || []).includes(x.row.id) && !(shownIn[x.row.id] || new Set()).has(t.id) && x.fits(ti)) : [];
+        return { id: t.id, type: t.type, name: t.name, rows: fit.map(x => ({ row: x.row.id, rowName: x.row.name })) };
+      }).filter(x => x.rows.length);
+      fs.writeFileSync(sugFile, JSON.stringify({ at: new Date().toISOString(), by: 'GitHub', titles: (re.titles || []).length, placements: items.reduce((k, x) => k + x.rows.length, 0), items }));
+      console.log(`Re-evaluate: ${(re.titles || []).length} titles checked, ${items.length} with rows to suggest`);
     }
   }
 
