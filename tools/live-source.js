@@ -103,6 +103,8 @@ function normalise(def) {
       language: pick(def.language, FILTERS.languages, ''),   // original language
       // ...or any of these. With both given, a title in any of them counts.
       languages: [...new Set(Array.isArray(def.languages) ? def.languages : [])].filter(l => FILTERS.languages.includes(l) && l !== def.language),
+      // At least one of these genres ("Sci-Fi & Fantasy"); "includeGenres" is all of them.
+      anyGenres: [...new Set(Array.isArray(def.anyGenres) ? def.anyGenres : [])].filter(g => FILTERS.indexGenres.includes(g)),
       maxVotes: pick(Number(def.maxVotes), FILTERS.maxVotes, 0),
       platform: pick(def.platform, FILTERS.platforms, ''),   // made for or distributed by this platform
       // ...or by any of these. With both given, a title on any of them counts.
@@ -138,6 +140,7 @@ function ruleWords(d) {
     d.yearFrom && d.yearTo ? `${d.yearFrom}–${d.yearTo}` : d.yearFrom ? `from ${d.yearFrom}` : d.yearTo ? `up to ${d.yearTo}` : '',
     d.minRating && d.maxRating ? `rated ${d.minRating}–${d.maxRating}` : d.minRating ? `rated ${d.minRating}+` : d.maxRating ? `rated up to ${d.maxRating}` : '',
     d.includeGenres.length ? (d.source === 'index' ? '' : 'also ') + d.includeGenres.join(' + ').toLowerCase() : '',
+    (d.anyGenres || []).length ? d.anyGenres.join(' or ').toLowerCase() : '',
     d.excludeGenres.length ? 'no ' + d.excludeGenres.join(', ').toLowerCase() : '',
     d.platform || (d.platforms || []).length ? `${[d.platform, ...(d.platforms || [])].filter(Boolean).join(', ')} originals and exclusives` : '',
     (d.languages || []).length > 3 ? `in any of ${d.languages.length + (d.language ? 1 : 0)} languages`
@@ -244,6 +247,7 @@ async function fetchIndexList(d, known, exclude) {
     (!d.sinceYears || t.year >= firstYear) && (!d.yearFrom || t.year >= d.yearFrom) && (!d.yearTo || t.year <= d.yearTo) &&
     (!d.minRating || t.rating >= d.minRating) && (!d.maxRating || t.rating <= d.maxRating) &&
     d.includeGenres.every(g => t.genres.includes(g)) && !d.excludeGenres.some(g => t.genres.includes(g)) &&
+    (!d.anyGenres.length || d.anyGenres.some(g => t.genres.includes(g))) &&
     (!d.runtimeMin || t.runtime >= d.runtimeMin) && (!d.runtimeMax || (t.runtime && t.runtime <= d.runtimeMax)) &&
     (!inCountry || inCountry.has(t.id)) && (!inLanguage || inLanguage.has(t.id)) && (!onPlatform || onPlatform.has(t.id)) && !notCountries.some(s => s.has(t.id)) &&
     !(d.excludeMyRows && exclude.has(t.id)));
