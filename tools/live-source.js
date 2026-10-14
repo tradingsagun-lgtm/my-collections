@@ -369,8 +369,11 @@ async function fetchMdblist(d, known) {
 // Fetches the current titles for a definition, in the source's order.
 // previous: the titles from the last refresh, reused where a source needs per-title lookups.
 // excludeIds: ids of the titles in the hand-picked rows, for the "not already in my rows" rule.
-async function fetchList(def, previous = [], excludeIds = []) {
-  const d = normalise(def);
+// spare: how many titles to fetch beyond the row's size. This PC keeps a few in hand to fill the
+// places of titles left out because they have been watched; the job on GitHub fetches none.
+async function fetchList(def, previous = [], excludeIds = [], { spare = 0 } = {}) {
+  const d = { ...normalise(def) };
+  d.limit += spare;
   const known = Object.fromEntries(previous.filter(m => m && m.id && m.poster && m.type === d.type).map(m => [m.id, m]));
   const exclude = new Set(excludeIds);
   const metas = d.source === 'mdblist' ? await fetchMdblist(d, known)
