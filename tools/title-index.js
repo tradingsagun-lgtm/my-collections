@@ -48,9 +48,10 @@ const PLATFORMS = {
 const GENRES = ['Action', 'Adventure', 'Animation', 'Biography', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy',
   'Film-Noir', 'History', 'Horror', 'Music', 'Musical', 'Mystery', 'Reality-TV', 'Romance', 'Sci-Fi', 'Sport', 'Thriller', 'War', 'Western'];
 
-// On the PC the index lives beside the other per-PC files; on GitHub, in the job's workspace.
-const defaultDir = () => process.env.LOCALAPPDATA
-  ? path.join(process.env.LOCALAPPDATA, 'stremio-collections', 'index')
+// On the PC the index lives beside the other per-PC files (STREMIO_COLLECTIONS_HOME, set by config.js:
+// %USERPROFILE%\.stremio-collections since v1.77.0); on GitHub, in the job's workspace.
+const defaultDir = () => process.env.STREMIO_COLLECTIONS_HOME ? path.join(process.env.STREMIO_COLLECTIONS_HOME, 'index')
+  : process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'stremio-collections', 'index')
   : path.join(__dirname, '..', '.index-cache');
 const indexFile = dir => path.join(dir, 'title-index.json');
 
